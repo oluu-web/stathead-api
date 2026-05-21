@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"fmt"
+	"log"
 	"stathead/internal/model"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,10 +20,13 @@ func NewPlayerStore(db *pgxpool.Pool) *PlayerStore {
 }
 
 func (s *PlayerStore) Search(ctx context.Context, q string) ([]model.Player, error) {
+	if len(strings.TrimSpace(q)) < 2 {
+		return nil, fmt.Errorf("query too short")
+	}
 	rows, err := s.db.Query(ctx, `
 		SELECT player_id, full_name
 		FROM players
-		WHERE full_name ILIKE $1
+		WHERE unaccent(lower(full_name)) LIKE unaccent(lower($1))
 		ORDER BY full_name
 		LIMIT 10
 	`, "%"+q+"%")
@@ -82,16 +88,16 @@ func (s *PlayerStore) GameLogs(ctx context.Context, params model.GameLogParams) 
 		FROM player_game_logs
 		WHERE player_id_nba = (
 		    SELECT player_id_nba FROM player_id_map
-		    WHERE full_name ILIKE $1 LIMIT 1
+		    WHERE player_id_br = $1
 		)
 		AND season_type = $2
 	`
-	args := []any{"%" + params.PlayerID + "%", params.SeasonType}
+	args := []any{params.PlayerBRID, params.SeasonType}
 	i := 3
 
-	if params.Season != "" {
+	if params.SeasonYear != 0 {
 		query += " AND season = $" + itoa(i)
-		args = append(args, params.Season)
+		args = append(args, fmt.Sprintf("%d-%02d", params.SeasonYear-1, params.SeasonYear%100))
 		i++
 	}
 	if params.FgPctLt != nil {
@@ -99,12 +105,15 @@ func (s *PlayerStore) GameLogs(ctx context.Context, params model.GameLogParams) 
 		args = append(args, *params.FgPctLt)
 		i++
 	}
-	if params.MinFGA > 0 {
+	if params.MinFGA != nil {
 		query += " AND fga >= $" + itoa(i)
-		args = append(args, params.MinFGA)
+		args = append(args, *params.MinFGA)
 		i++
 	}
 	query += " ORDER BY game_date ASC"
+
+	log.Printf("query: %s", query)
+	log.Printf("args: %v", args)
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
@@ -125,6 +134,7 @@ func (s *PlayerStore) GameLogs(ctx context.Context, params model.GameLogParams) 
 		}
 		logs = append(logs, g)
 	}
+	log.Printf("GameLogs returned %d rows", len(logs))
 	return logs, rows.Err()
 }
 
@@ -138,9 +148,11 @@ func (s *PlayerStore) Compare(ctx context.Context, playerIDs []string, season, s
 		WHERE s.player_id = ANY($1) AND s.season_type = $2
 	`
 	args := []any{playerIDs, seasonType}
+	i := 3
 	if season != "" {
-		query += " AND s.season = $3"
+		query += " AND s.season = $" + itoa(i)
 		args = append(args, season)
+		i++
 	}
 	query += " ORDER BY s.player_id, s.season"
 
@@ -182,11 +194,18 @@ func (s *PlayerStore) Leaders(ctx context.Context, stat, season, seasonType stri
 		JOIN players p ON p.player_id = s.player_id
 		WHERE s.season_type = $1
 		  AND s.` + stat + ` IS NOT NULL
-		  AND s.games >= 20
+		  AND s.games >= 58
 	`
 	args := []any{seasonType}
 	i := 2
 
+	if len(season) == 4 {
+		y, err := strconv.Atoi(season)
+		if err != nil {
+			return nil, fmt.Errorf("invalid season year %q: %w", season, err)
+		}
+		season = fmt.Sprintf("%d-%02d", y-1, y%100)
+	}
 	if season != "" {
 		query += " AND s.season = $" + itoa(i)
 		args = append(args, season)
@@ -194,6 +213,8 @@ func (s *PlayerStore) Leaders(ctx context.Context, stat, season, seasonType stri
 	}
 	query += " ORDER BY s." + stat + " DESC LIMIT $" + itoa(i)
 	args = append(args, limit)
+	log.Printf("DEBUG Leaders | query: %s", query)
+	log.Printf("DEBUG Leaders | args: %+v", args)
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
@@ -201,7 +222,7 @@ func (s *PlayerStore) Leaders(ctx context.Context, stat, season, seasonType stri
 	}
 	defer rows.Close()
 
-	var leaders []model.LeaderRow
+	leaders := []model.LeaderRow{}
 	for rows.Next() {
 		var l model.LeaderRow
 		l.Stat = stat

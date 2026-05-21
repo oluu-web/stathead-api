@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,9 +13,15 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
 	ctx := context.Background()
 
 	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
@@ -22,6 +29,12 @@ func main() {
 		slog.Error("db connect failed", "err", err)
 		os.Exit(1)
 	}
+
+	if err := pool.Ping(ctx); err != nil {
+		slog.Error("db ping failed", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("connected to database")
 	defer pool.Close()
 
 	playerStore := store.NewPlayerStore(pool)
@@ -32,7 +45,7 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{os.Getenv("ALLOWED_ORIGIN")},
+		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders: []string{"Accept", "Content-Type"},
 	}))
@@ -43,11 +56,11 @@ func main() {
 	})
 
 	r.Route("/players", func(r chi.Router) {
-		r.Get("/search",               playerHandler.Search)
-		r.Get("/compare",              playerHandler.Compare)
-		r.Get("/leaders",              playerHandler.Leaders)
-		r.Get("/{playerID}/seasons",   playerHandler.Seasons)
-		r.Get("/{playerID}/gamelogs",  playerHandler.GameLogs)
+		r.Get("/search", playerHandler.Search)
+		r.Get("/compare", playerHandler.Compare)
+		r.Get("/leaders", playerHandler.Leaders)
+		r.Get("/{playerID}/seasons", playerHandler.Seasons)
+		r.Get("/{playerID}/gamelogs", playerHandler.GameLogs)
 	})
 
 	port := os.Getenv("PORT")

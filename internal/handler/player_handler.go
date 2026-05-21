@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"stathead/internal/model"
 	"strconv"
@@ -43,7 +44,7 @@ func (h *PlayerHandler) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlayerHandler) Seasons(w http.ResponseWriter, r *http.Request) {
-	playerID   := chi.URLParam(r, "playerID")
+	playerID := chi.URLParam(r, "playerID")
 	seasonType := defaultStr(r.URL.Query().Get("season_type"), "regular")
 
 	seasons, err := h.store.Seasons(r.Context(), playerID, seasonType)
@@ -56,25 +57,47 @@ func (h *PlayerHandler) Seasons(w http.ResponseWriter, r *http.Request) {
 
 func (h *PlayerHandler) GameLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	seasonStr := q.Get("season")
+	var seasonYear int
+	if seasonStr != "" {
+		var err error
+		seasonYear, err = strconv.Atoi(seasonStr)
+		if err != nil {
+			http.Error(w, "season must be a 4-digit year e.g. ?season=2024", http.StatusBadRequest)
+			return
+		}
+	}
 	params := model.GameLogParams{
-		PlayerID:   chi.URLParam(r, "playerID"),
-		Season:     q.Get("season"),
+		PlayerBRID: chi.URLParam(r, "playerID"),
+		SeasonYear: seasonYear,
 		SeasonType: defaultStr(q.Get("season_type"), "regular"),
 	}
 
 	if v := q.Get("fg_pct_lt"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			params.FgPctLt = &f
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			http.Error(w, "fg_pct must be a float", http.StatusBadRequest)
+			return
 		}
+		params.FgPctLt = &f
 	}
 	if v := q.Get("min_fga"); v != "" {
-		params.MinFGA, _ = strconv.Atoi(v)
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "min_fga must be an integer", http.StatusBadRequest)
+			return
+		}
+		params.MinFGA = &n
 	}
+	log.Printf("GameLogs params: %+v", params)
 
 	logs, err := h.store.GameLogs(r.Context(), params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if logs == nil {
+		logs = []model.GameLog{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"count": len(logs),
@@ -83,12 +106,17 @@ func (h *PlayerHandler) GameLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlayerHandler) Compare(w http.ResponseWriter, r *http.Request) {
-	ids        := r.URL.Query()["player_id"]
-	season     := r.URL.Query().Get("season")
+	ids := r.URL.Query()["player_id"]
+	season := r.URL.Query().Get("season")
 	seasonType := defaultStr(r.URL.Query().Get("season_type"), "regular")
 
 	if len(ids) < 2 {
 		writeError(w, http.StatusBadRequest, "provide at least 2 player_id params")
+		return
+	}
+
+	if len(ids) > 10 {
+		writeError(w, http.StatusBadRequest, "maximum 10 player_ids")
 		return
 	}
 
@@ -101,12 +129,22 @@ func (h *PlayerHandler) Compare(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlayerHandler) Leaders(w http.ResponseWriter, r *http.Request) {
-	q          := r.URL.Query()
-	stat       := q.Get("stat")
-	season     := q.Get("season")
+	q := r.URL.Query()
+	stat := q.Get("stat")
+	season := q.Get("season")
 	seasonType := defaultStr(q.Get("season_type"), "regular")
-	limit, _   := strconv.Atoi(defaultStr(q.Get("limit"), "10"))
-	if limit > 50 { limit = 50 }
+	limit, err := strconv.Atoi(defaultStr(q.Get("limit"), "10"))
+	if err != nil || limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	if stat == "" {
+		writeError(w, http.StatusBadRequest, "stat param required")
+		return
+	}
 
 	leaders, err := h.store.Leaders(r.Context(), stat, season, seasonType, limit)
 	if errors.Is(err, model.ErrInvalidStat) {
@@ -127,7 +165,9 @@ func (h *PlayerHandler) Leaders(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("writeJSON encode error: %v", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

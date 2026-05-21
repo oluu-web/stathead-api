@@ -1,6 +1,9 @@
 package model
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var ErrInvalidStat = errors.New("invalid stat column")
 
@@ -42,35 +45,35 @@ type SeasonLine struct {
 }
 
 type GameLog struct {
-	GameID    string   `json:"game_id"`
-	GameDate  string   `json:"game_date"`
-	Matchup   string   `json:"matchup"`
-	WL        string   `json:"wl"`
-	Min       *float64 `json:"min"`
-	Pts       *float64 `json:"pts"`
-	Reb       *float64 `json:"reb"`
-	Ast       *float64 `json:"ast"`
-	Stl       *float64 `json:"stl"`
-	Blk       *float64 `json:"blk"`
-	Tov       *float64 `json:"tov"`
-	Fgm       *float64 `json:"fgm"`
-	Fga       *float64 `json:"fga"`
-	FgPct     *float64 `json:"fg_pct"`
-	Fg3m      *float64 `json:"fg3m"`
-	Fg3a      *float64 `json:"fg3a"`
-	Fg3Pct    *float64 `json:"fg3_pct"`
-	Ftm       *float64 `json:"ftm"`
-	Fta       *float64 `json:"fta"`
-	FtPct     *float64 `json:"ft_pct"`
-	PlusMinus *float64 `json:"plus_minus"`
+	GameID    string    `json:"game_id"`
+	GameDate  time.Time `json:"game_date"`
+	Matchup   string    `json:"matchup"`
+	WL        string    `json:"wl"`
+	Min       *float64  `json:"min"`
+	Pts       *float64  `json:"pts"`
+	Reb       *float64  `json:"reb"`
+	Ast       *float64  `json:"ast"`
+	Stl       *float64  `json:"stl"`
+	Blk       *float64  `json:"blk"`
+	Tov       *float64  `json:"tov"`
+	Fgm       *float64  `json:"fgm"`
+	Fga       *float64  `json:"fga"`
+	FgPct     *float64  `json:"fg_pct"`
+	Fg3m      *float64  `json:"fg3m"`
+	Fg3a      *float64  `json:"fg3a"`
+	Fg3Pct    *float64  `json:"fg3_pct"`
+	Ftm       *float64  `json:"ftm"`
+	Fta       *float64  `json:"fta"`
+	FtPct     *float64  `json:"ft_pct"`
+	PlusMinus *float64  `json:"plus_minus"`
 }
 
 type GameLogParams struct {
-	PlayerID   string
-	Season     string
+	PlayerBRID string
+	SeasonYear int // season_end_year: 2024 = 2023-24 season
 	SeasonType string
 	FgPctLt    *float64
-	MinFGA     int
+	MinFGA     *int
 }
 
 type StatLine struct {
