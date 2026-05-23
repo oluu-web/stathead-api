@@ -138,3 +138,21 @@ type HeadToHead struct {
 	AWins       int    `json:"a_wins"`
 	BWins       int    `json:"b_wins"`
 }
+
+type DefenseStat struct {
+	PlayerIDNBA   int64    `json:"player_id_nba"`
+	FullName      string   `json:"full_name"`
+	Season        string   `json:"season"`
+	SeasonType    string   `json:"season_type"`
+	DefFGAPerGame *float64 `json:"def_fga"`
+	DefFGMPerGame *float64 `json:"def_fgm"`
+	DefFGPct      *float64 `json:"def_fgpct"`
+	DfgDiff       *float64 `json:"dfg_diff"`
+	NormalFGPct   *float64 `json:"normal_fgpct"`
+}
+
+type DefenseParams struct {
+	PlayerBRID string
+	SeasonYear int
+	SeasonType string
+}

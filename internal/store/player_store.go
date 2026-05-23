@@ -393,6 +393,54 @@ func (s *PlayerStore) HeadToHead(ctx context.Context, playerIDA, playerIDB, seas
 	return &h, nil
 }
 
+func (s *PlayerStore) DefenseStats(ctx context.Context, params model.DefenseParams) ([]model.DefenseStat, error) {
+	args := []any{params.PlayerBRID, params.SeasonType}
+	query := `
+		SELECT
+			d.player_id_nba,
+			COALESCE(p.full_name, m.full_name, 'Unknown') AS full_name,
+			d.season,
+			d.season_type,
+			d.def_fga,
+			d.def_fgm,
+			ROUND(d.def_fgpct * 100, 1) AS def_fgpct,
+			ROUND(d.dfg_diff * 100, 1) AS dfg_diff,
+			ROUND(d.normal_fgpct * 100, 1) AS normal_fgpct
+		FROM player_defense_stats d
+		LEFT JOIN player_id_map m ON m.player_id_nba = d.player_id_nba
+		LEFT JOIN players p ON p.player_id = m.player_id_br
+		WHERE m.player_id_br = $1
+		  AND d.season_type = $2`
+
+	if params.SeasonYear != 0 {
+		season := fmt.Sprintf("%d-%02d", params.SeasonYear-1, params.SeasonYear%100)
+		args = append(args, season)
+		query += fmt.Sprintf(" AND d.season = $%d", len(args))
+	}
+
+	query += " ORDER BY d.season ASC"
+
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []model.DefenseStat
+	for rows.Next() {
+		var d model.DefenseStat
+		if err := rows.Scan(
+			&d.PlayerIDNBA, &d.FullName, &d.Season, &d.SeasonType,
+			&d.DefFGAPerGame, &d.DefFGMPerGame, &d.DefFGPct,
+			&d.DfgDiff, &d.NormalFGPct,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, d)
+	}
+	return results, rows.Err()
+}
+
 func itoa(i int) string {
 	return fmt.Sprintf("%d", i)
 }

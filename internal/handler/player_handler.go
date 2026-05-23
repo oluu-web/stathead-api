@@ -22,6 +22,7 @@ type PlayerStorer interface {
 	GameLogsVsTeam(ctx context.Context, params model.VsTeamParams) ([]model.GameLog, error)
 	GameLogsVsTeamAllTime(ctx context.Context, params model.VsTeamAllTimeParams) ([]model.VsTeamSeason, error)
 	HeadToHead(ctx context.Context, playerIDA, playerIDB, seasonType, season string) (*model.HeadToHead, error)
+	DefenseStats(ctx context.Context, params model.DefenseParams) ([]model.DefenseStat, error)
 }
 
 type PlayerHandler struct {
@@ -256,6 +257,46 @@ func (h *PlayerHandler) VsTeamAllTime(w http.ResponseWriter, r *http.Request) {
 		"team":      params.Team,
 		"seasons":   len(seasons),
 		"rows":      seasons,
+	})
+}
+
+func (h *PlayerHandler) Defense(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	seasonStr := q.Get("season")
+	var seasonYear int
+	if seasonStr != "" {
+		var err error
+		seasonYear, err = strconv.Atoi(seasonStr)
+		if err != nil {
+			http.Error(w, "season must be a 4-digit year, e.g. ?season=2024", http.StatusBadRequest)
+			return
+		}
+	}
+
+	params := model.DefenseParams{
+		PlayerBRID: chi.URLParam(r, "playerID"),
+		SeasonYear: seasonYear, // 0 means all seasons
+		SeasonType: defaultStr(q.Get("seasontype"), "regular"),
+	}
+
+	log.Printf("Defense params: %+v", params)
+
+	stats, err := h.store.DefenseStats(r.Context(), params)
+	if err != nil {
+		log.Fatalln(err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch defense stats")
+		return
+	}
+	if stats == nil {
+		stats = []model.DefenseStat{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player_id": params.PlayerBRID,
+		"season":    strconv.Itoa(seasonYear),
+		"count":     len(stats),
+		"stats":     stats,
 	})
 }
 
