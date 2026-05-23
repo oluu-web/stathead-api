@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"log"
 	"stathead/internal/model"
 	"strconv"
 	"strings"
@@ -112,8 +111,53 @@ func (s *PlayerStore) GameLogs(ctx context.Context, params model.GameLogParams) 
 	}
 	query += " ORDER BY game_date ASC"
 
-	log.Printf("query: %s", query)
-	log.Printf("args: %v", args)
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []model.GameLog
+	for rows.Next() {
+		var g model.GameLog
+		if err := rows.Scan(
+			&g.GameID, &g.GameDate, &g.Matchup, &g.WL, &g.Min,
+			&g.Pts, &g.Reb, &g.Ast, &g.Stl, &g.Blk, &g.Tov,
+			&g.Fgm, &g.Fga, &g.FgPct, &g.Fg3m, &g.Fg3a, &g.Fg3Pct,
+			&g.Ftm, &g.Fta, &g.FtPct, &g.PlusMinus,
+		); err != nil {
+			return nil, err
+		}
+		logs = append(logs, g)
+	}
+	return logs, rows.Err()
+}
+
+func (s *PlayerStore) GameLogsVsTeam(ctx context.Context, params model.VsTeamParams) ([]model.GameLog, error) {
+	teamFilter := "%" + params.Team + "%"
+	args := []any{params.PlayerBRID, params.SeasonType, teamFilter}
+	i := 4
+
+	query := `
+		SELECT game_id, game_date, matchup, wl, min,
+		       pts, reb, ast, stl, blk, tov,
+		       fgm, fga, fg_pct, fg3m, fg3a, fg3_pct,
+		       ftm, fta, ft_pct, plus_minus
+		FROM player_game_logs
+		WHERE player_id_nba = (
+			SELECT player_id_nba FROM player_id_map
+		 WHERE player_id_br = $1
+		)
+			AND season_type = $2
+			AND matchup ILIKE $3
+	`
+
+	if params.SeasonYear != 0 {
+		query += " AND season = $" + itoa(i)
+		args = append(args, fmt.Sprintf("%d-%02d", params.SeasonYear-1, params.SeasonYear%100))
+		i++
+	}
+	query += ` ORDER BY game_date ASC`
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
@@ -134,11 +178,52 @@ func (s *PlayerStore) GameLogs(ctx context.Context, params model.GameLogParams) 
 		}
 		logs = append(logs, g)
 	}
-	log.Printf("GameLogs returned %d rows", len(logs))
 	return logs, rows.Err()
 }
 
-func (s *PlayerStore) Compare(ctx context.Context, playerIDs []string, season, seasonType string) ([]model.StatLine, error) {
+func (s *PlayerStore) GameLogsVsTeamAllTime(ctx context.Context, params model.VsTeamAllTimeParams) ([]model.VsTeamSeason, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT season,
+			COUNT(*) AS games,
+			ROUND(AVG(pts)::numeric, 1),
+			ROUND(AVG(reb)::numeric, 1),
+			ROUND(AVG(ast)::numeric, 1),
+			ROUND(AVG(stl)::numeric, 1),
+			ROUND(AVG(blk)::numeric, 1),
+			ROUND(AVG(tov)::numeric, 1),
+			ROUND(AVG(fg_pct)::numeric, 3),
+			ROUND(AVG(fg3_pct)::numeric, 3),
+			ROUND(AVG(plus_minus)::numeric, 1)
+		FROM player_game_logs
+		WHERE player_id_nba = (
+			SELECT player_id_nba FROM player_id_map
+			WHERE player_id_br = $1
+		)
+			AND season_type = $2
+			AND matchup ILIKE $3
+		GROUP BY season
+		ORDER BY season ASC
+	`, params.PlayerBRID, params.SeasonType, "%"+params.Team+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []model.VsTeamSeason
+	for rows.Next() {
+		var r model.VsTeamSeason
+		if err := rows.Scan(
+			&r.Season, &r.Games, &r.Pts, &r.Reb, &r.Ast,
+			&r.Stl, &r.Blk, &r.Tov, &r.FgPct, &r.Fg3Pct, &r.PlusMinus,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+func (s *PlayerStore) Compare(ctx context.Context, playerIDs []string, seasons []string, seasonType string) ([]model.StatLine, error) {
 	query := `
 		SELECT p.full_name, s.player_id, s.season, s.team,
 		       s.pts, s.reb, s.ast, s.stl, s.blk,
@@ -149,9 +234,28 @@ func (s *PlayerStore) Compare(ctx context.Context, playerIDs []string, season, s
 	`
 	args := []any{playerIDs, seasonType}
 	i := 3
-	if season != "" {
+
+	var normalizedSeasons []string
+	for _, season := range seasons {
+		if len(season) == 4 {
+			y, err := strconv.Atoi(season)
+			if err != nil {
+				return nil, fmt.Errorf("invalid season year %q: %w", season, err)
+			}
+			season = fmt.Sprintf("%d-%02d", y-1, y%100)
+		}
+		if season != "" {
+			normalizedSeasons = append(normalizedSeasons, season)
+		}
+	}
+
+	if len(normalizedSeasons) == 1 {
 		query += " AND s.season = $" + itoa(i)
-		args = append(args, season)
+		args = append(args, normalizedSeasons[0])
+		i++
+	} else if len(normalizedSeasons) > 1 {
+		query += " AND s.season = ANY($" + itoa(i) + ")"
+		args = append(args, normalizedSeasons)
 		i++
 	}
 	query += " ORDER BY s.player_id, s.season"
@@ -213,8 +317,6 @@ func (s *PlayerStore) Leaders(ctx context.Context, stat, season, seasonType stri
 	}
 	query += " ORDER BY s." + stat + " DESC LIMIT $" + itoa(i)
 	args = append(args, limit)
-	log.Printf("DEBUG Leaders | query: %s", query)
-	log.Printf("DEBUG Leaders | args: %+v", args)
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
@@ -232,6 +334,62 @@ func (s *PlayerStore) Leaders(ctx context.Context, stat, season, seasonType stri
 		leaders = append(leaders, l)
 	}
 	return leaders, rows.Err()
+}
+
+func (s *PlayerStore) HeadToHead(ctx context.Context, playerIDA, playerIDB, seasonType, season string) (*model.HeadToHead, error) {
+	if len(season) == 4 {
+		y, err := strconv.Atoi(season)
+		if err != nil {
+			return nil, fmt.Errorf("invalid season year %q: %w", season, err)
+		}
+		season = fmt.Sprintf("%d-%02d", y-1, y%100)
+	}
+
+	seasonClause := ""
+	args := []any{playerIDA, playerIDB, seasonType}
+	if season != "" {
+		seasonClause = " AND gl.season = $4"
+		args = append(args, season)
+	}
+
+	query := `
+		WITH a_games AS (
+		    SELECT gl.game_date, gl.wl, gl.matchup
+		    FROM player_game_logs gl
+		    JOIN player_id_map m ON m.player_id_nba = gl.player_id_nba
+		    WHERE m.player_id_br = $1
+		      AND gl.season_type = $3
+		` + seasonClause + `
+		),
+		b_games AS (
+		    SELECT gl.game_date, gl.matchup
+		    FROM player_game_logs gl
+		    JOIN player_id_map m ON m.player_id_nba = gl.player_id_nba
+		    WHERE m.player_id_br = $2
+		      AND gl.season_type = $3
+		` + seasonClause + `
+		),
+		h2h AS (
+		    SELECT a.wl AS a_wl
+		    FROM a_games a
+		    JOIN b_games b ON b.game_date = a.game_date
+		    AND a.matchup ILIKE '%' || SPLIT_PART(b.matchup, ' ', 1) || '%'
+		)
+		SELECT
+		    COUNT(*)                                AS games_played,
+		    COUNT(*) FILTER (WHERE a_wl = 'W')      AS a_wins,
+		    COUNT(*) FILTER (WHERE a_wl = 'L')      AS b_wins
+		FROM h2h`
+
+	row := s.db.QueryRow(ctx, query, args...)
+
+	var h model.HeadToHead
+	h.PlayerA = playerIDA
+	h.PlayerB = playerIDB
+	if err := row.Scan(&h.GamesPlayed, &h.AWins, &h.BWins); err != nil {
+		return nil, err
+	}
+	return &h, nil
 }
 
 func itoa(i int) string {

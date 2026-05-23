@@ -17,8 +17,11 @@ type PlayerStorer interface {
 	Search(ctx context.Context, q string) ([]model.Player, error)
 	Seasons(ctx context.Context, playerID, seasonType string) ([]model.SeasonLine, error)
 	GameLogs(ctx context.Context, params model.GameLogParams) ([]model.GameLog, error)
-	Compare(ctx context.Context, playerIDs []string, season, seasonType string) ([]model.StatLine, error)
+	Compare(ctx context.Context, playerIDs, seasons []string, seasonType string) ([]model.StatLine, error)
 	Leaders(ctx context.Context, stat, season, seasonType string, limit int) ([]model.LeaderRow, error)
+	GameLogsVsTeam(ctx context.Context, params model.VsTeamParams) ([]model.GameLog, error)
+	GameLogsVsTeamAllTime(ctx context.Context, params model.VsTeamAllTimeParams) ([]model.VsTeamSeason, error)
+	HeadToHead(ctx context.Context, playerIDA, playerIDB, seasonType, season string) (*model.HeadToHead, error)
 }
 
 type PlayerHandler struct {
@@ -89,7 +92,6 @@ func (h *PlayerHandler) GameLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		params.MinFGA = &n
 	}
-	log.Printf("GameLogs params: %+v", params)
 
 	logs, err := h.store.GameLogs(r.Context(), params)
 	if err != nil {
@@ -106,26 +108,46 @@ func (h *PlayerHandler) GameLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlayerHandler) Compare(w http.ResponseWriter, r *http.Request) {
-	ids := r.URL.Query()["player_id"]
-	season := r.URL.Query().Get("season")
-	seasonType := defaultStr(r.URL.Query().Get("season_type"), "regular")
+	q := r.URL.Query()
+	ids := q["player_id"]
+	seasons := q["season"]
+	seasonType := defaultStr(q.Get("season_type"), "regular")
 
-	if len(ids) < 2 {
-		writeError(w, http.StatusBadRequest, "provide at least 2 player_id params")
+	if len(ids) < 1 {
+		writeError(w, http.StatusBadRequest, "provide at least 1 player_id param")
 		return
 	}
-
 	if len(ids) > 10 {
 		writeError(w, http.StatusBadRequest, "maximum 10 player_ids")
 		return
 	}
 
-	results, err := h.store.Compare(r.Context(), ids, season, seasonType)
+	results, err := h.store.Compare(r.Context(), ids, seasons, seasonType)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, results)
+	if results == nil {
+		results = []model.StatLine{}
+	}
+
+	resp := map[string]any{"rows": results}
+
+	if len(ids) == 2 && ids[0] != ids[1] {
+		h2hSeason := ""
+		if len(seasons) == 1 {
+			h2hSeason = seasons[0]
+		}
+
+		h2h, err := h.store.HeadToHead(r.Context(), ids[0], ids[1], seasonType, h2hSeason)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp["head_to_head"] = h2h
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *PlayerHandler) Leaders(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +181,81 @@ func (h *PlayerHandler) Leaders(w http.ResponseWriter, r *http.Request) {
 		"stat":    stat,
 		"season":  season,
 		"leaders": leaders,
+	})
+}
+
+func (h *PlayerHandler) VsTeam(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	seasonStr := q.Get("season")
+	var seasonYear int
+	if seasonStr != "" {
+		var err error
+		seasonYear, err = strconv.Atoi(seasonStr)
+		if err != nil {
+			http.Error(w, "season must be a 4-digit year e.g. ?season=2024", http.StatusBadRequest)
+			return
+		}
+	}
+
+	team := q.Get("team")
+	if team == "" {
+		http.Error(w, "team query param is required e.g. ?team=GSW", http.StatusBadRequest)
+		return
+	}
+
+	params := model.VsTeamParams{
+		PlayerBRID: chi.URLParam(r, "playerID"),
+		Team:       team,
+		SeasonYear: seasonYear,
+		SeasonType: defaultStr(q.Get("season_type"), "regular"),
+	}
+
+	logs, err := h.store.GameLogsVsTeam(r.Context(), params)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []model.GameLog{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player_id": params.PlayerBRID,
+		"team":      params.Team,
+		"season":    params.SeasonYear,
+		"count":     len(logs),
+		"logs":      logs,
+	})
+}
+
+func (h *PlayerHandler) VsTeamAllTime(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	team := q.Get("team")
+	if team == "" {
+		http.Error(w, "team query param is required e.g. ?team=GSW", http.StatusBadRequest)
+		return
+	}
+
+	params := model.VsTeamAllTimeParams{
+		PlayerBRID: chi.URLParam(r, "playerID"),
+		Team:       team,
+		SeasonType: defaultStr(q.Get("season_type"), "regular"),
+	}
+
+	seasons, err := h.store.GameLogsVsTeamAllTime(r.Context(), params)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if seasons == nil {
+		seasons = []model.VsTeamSeason{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player_id": params.PlayerBRID,
+		"team":      params.Team,
+		"seasons":   len(seasons),
+		"rows":      seasons,
 	})
 }
 

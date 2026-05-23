@@ -61,6 +61,8 @@ func main() {
 		r.Get("/leaders", playerHandler.Leaders)
 		r.Get("/{playerID}/seasons", playerHandler.Seasons)
 		r.Get("/{playerID}/gamelogs", playerHandler.GameLogs)
+		r.Get("/{playerID}/vs-team", playerHandler.VsTeam)
+		r.Get("/{playerID}/vs-team/all-time", playerHandler.VsTeamAllTime)
 	})
 
 	port := os.Getenv("PORT")
