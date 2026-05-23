@@ -374,6 +374,7 @@ func (s *PlayerStore) HeadToHead(ctx context.Context, playerIDA, playerIDB, seas
 		    FROM a_games a
 		    JOIN b_games b ON b.game_date = a.game_date
 		    AND a.matchup ILIKE '%' || SPLIT_PART(b.matchup, ' ', 1) || '%'
+						AND a.matchup != b.matchup
 		)
 		SELECT
 		    COUNT(*)                                AS games_played,
