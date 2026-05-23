@@ -103,3 +103,38 @@ type LeaderRow struct {
 	Team     string   `json:"team"`
 	Value    *float64 `json:"value"`
 }
+
+type VsTeamSeason struct {
+	Season    string  `json:"season"`
+	Games     int     `json:"games"`
+	Pts       float64 `json:"pts"`
+	Reb       float64 `json:"reb"`
+	Ast       float64 `json:"ast"`
+	Stl       float64 `json:"stl"`
+	Blk       float64 `json:"blk"`
+	Tov       float64 `json:"tov"`
+	FgPct     float64 `json:"fgpct"`
+	Fg3Pct    float64 `json:"fg3pct"`
+	PlusMinus float64 `json:"plusminus"`
+}
+
+type VsTeamParams struct {
+	PlayerBRID string
+	Team       string
+	SeasonYear int
+	SeasonType string
+}
+
+type VsTeamAllTimeParams struct {
+	PlayerBRID string
+	Team       string
+	SeasonType string
+}
+
+type HeadToHead struct {
+	PlayerA     string `json:"player_a"`
+	PlayerB     string `json:"player_b"`
+	GamesPlayed int    `json:"games_played"`
+	AWins       int    `json:"a_wins"`
+	BWins       int    `json:"b_wins"`
+}
